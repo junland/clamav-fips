@@ -1,11 +1,15 @@
 # ==============================================================================
 # Stage 1 – Builder
-# Compiles ClamAV 1.5.3 from source against an OpenSSL 3 FIPS provider.
+# Compiles OpenSSL 3 (with FIPS provider) and ClamAV 1.5.3 from source.
+# Ubuntu 22.04's standard openssl package does not ship fips.so, so OpenSSL
+# must be built from source with the "enable-fips" option.
 # ==============================================================================
 FROM ubuntu:22.04 AS builder
 
 ARG CLAMAV_VERSION=1.5.3
 ARG CLAMAV_SHA256=36af674e0fa4c7a065a23de3c7e748d0c5a14df8928f9a22c68df9d6c6b36e33
+ARG OPENSSL_VERSION=3.0.21
+ARG OPENSSL_SHA256=617e29af8e421f46649484a4937e48c685e47f46488167c982f88bc4ec1d522f
 
 ENV DEBIAN_FRONTEND=noninteractive
 
@@ -17,9 +21,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         pkg-config \
         python3 \
         wget \
-        # OpenSSL CLI (needed for openssl fipsinstall) + dev headers
-        openssl \
-        libssl-dev \
+        perl \
+        # ClamAV mandatory deps (OpenSSL provided by source build below)
         zlib1g-dev \
         libpcre2-dev \
         libxml2-dev \
@@ -29,11 +32,54 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         libmilter-dev \
     && rm -rf /var/lib/apt/lists/*
 
+# ── Build OpenSSL with FIPS provider from source ─────────────────────────────
+# The Ubuntu 22.04 openssl package does not include fips.so; it must be
+# compiled from source using the "enable-fips" configuration option.
+WORKDIR /src
+RUN wget -q "https://github.com/openssl/openssl/releases/download/openssl-${OPENSSL_VERSION}/openssl-${OPENSSL_VERSION}.tar.gz" \
+        -O openssl.tar.gz \
+    && echo "${OPENSSL_SHA256}  openssl.tar.gz" | sha256sum -c - \
+    && tar -xzf openssl.tar.gz \
+    && rm openssl.tar.gz
+
+WORKDIR /src/openssl-${OPENSSL_VERSION}
+RUN ./config \
+        --prefix=/opt/openssl \
+        --openssldir=/opt/openssl/ssl \
+        --libdir=lib \
+        enable-fips \
+        shared \
+        zlib \
+    && make -j"$(nproc)" \
+    && make install_sw install_fips
+
 # ── Generate the OpenSSL FIPS provider integrity file ────────────────────────
-# openssl fipsinstall writes fips.cnf which binds the FIPS module to its HMAC.
-RUN openssl fipsinstall \
-        -out /etc/ssl/fips.cnf \
-        -module /usr/lib/x86_64-linux-gnu/ossl-modules/fips.so
+# fipsinstall computes the HMAC of fips.so and writes the result to fips.cnf.
+# Placing fips.cnf alongside fips.so lets the FIPS provider find it
+# automatically at startup without needing an explicit path in openssl.cnf.
+RUN /opt/openssl/bin/openssl fipsinstall \
+        -out /opt/openssl/lib/ossl-modules/fips.cnf \
+        -module /opt/openssl/lib/ossl-modules/fips.so
+
+# ── Activate FIPS in the OpenSSL configuration ───────────────────────────────
+RUN sed -i 's/^\(# *\)\?openssl_conf = .*/openssl_conf = openssl_init/' \
+        /opt/openssl/ssl/openssl.cnf \
+    && cat >> /opt/openssl/ssl/openssl.cnf <<'EOF'
+
+# ── FIPS provider activation ──────────────────────────────────────────────────
+[openssl_init]
+providers = provider_sect
+
+[provider_sect]
+fips = fips_sect
+base = base_sect
+
+[fips_sect]
+activate = 1
+
+[base_sect]
+activate = 1
+EOF
 
 # ── Download and verify ClamAV source ────────────────────────────────────────
 WORKDIR /src
@@ -48,18 +94,19 @@ WORKDIR /src/clamav-${CLAMAV_VERSION}
 RUN cmake -G Ninja -B build \
         -DCMAKE_BUILD_TYPE=Release \
         -DCMAKE_INSTALL_PREFIX=/opt/clamav \
-        # Disable features that are not needed in a minimal FIPS container
+        # Disable features not needed in a minimal FIPS container
         -DENABLE_EXAMPLES=OFF \
         -DENABLE_TESTS=OFF \
         -DENABLE_DOCS=OFF \
-        # Point cmake at the system OpenSSL 3 (FIPS-capable)
-        -DOPENSSL_ROOT_DIR=/usr \
+        # Point cmake at the source-built, FIPS-capable OpenSSL
+        -DOPENSSL_ROOT_DIR=/opt/openssl \
+        -DOPENSSL_INCLUDE_DIR=/opt/openssl/include \
     && cmake --build build --parallel "$(nproc)" \
     && cmake --install build
 
 # ==============================================================================
 # Stage 2 – Runtime
-# Minimal image with the FIPS provider active and the ClamAV install dropped in.
+# Minimal image with the FIPS-enabled OpenSSL and ClamAV install.
 # ==============================================================================
 FROM ubuntu:22.04
 
@@ -67,9 +114,6 @@ ENV DEBIAN_FRONTEND=noninteractive
 
 # ── Runtime dependencies ─────────────────────────────────────────────────────
 RUN apt-get update && apt-get install -y --no-install-recommends \
-        # OpenSSL 3 runtime + FIPS provider module
-        openssl \
-        libssl3 \
         # ClamAV runtime deps
         zlib1g \
         libpcre2-8-0 \
@@ -79,37 +123,18 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         libmilter1.0.1 \
     && rm -rf /var/lib/apt/lists/*
 
-# ── Enable OpenSSL FIPS provider ─────────────────────────────────────────────
-# Copy the HMAC integrity file produced by "openssl fipsinstall" in the builder.
-COPY --from=builder /etc/ssl/fips.cnf /etc/ssl/fips.cnf
-
-# Patch the global openssl.cnf to activate the FIPS provider and make it the
-# default, while keeping the base provider available for internal TLS plumbing.
-RUN sed -i 's/^\(# *\)\?openssl_conf = .*/openssl_conf = openssl_init/' \
-        /etc/ssl/openssl.cnf \
-    && cat >> /etc/ssl/openssl.cnf <<'EOF'
-
-# ── FIPS provider activation ──────────────────────────────────────────────────
-[openssl_init]
-providers = provider_sect
-
-[provider_sect]
-fips = fips_sect
-base = base_sect
-
-[fips_sect]
-activate = 1
-# Load integrity data from the fipsinstall step
-module-mac = /etc/ssl/fips.cnf
-
-[base_sect]
-activate = 1
-EOF
+# ── Copy FIPS-enabled OpenSSL from builder ────────────────────────────────────
+# This brings fips.so, fips.cnf, and the patched openssl.cnf into the image.
+COPY --from=builder /opt/openssl /opt/openssl
 
 # ── Install ClamAV ────────────────────────────────────────────────────────────
 COPY --from=builder /opt/clamav /opt/clamav
-ENV PATH="/opt/clamav/bin:/opt/clamav/sbin:${PATH}"
-ENV LD_LIBRARY_PATH="/opt/clamav/lib:${LD_LIBRARY_PATH}"
+
+# Prepend our FIPS-enabled OpenSSL libraries so all binaries (including
+# libcurl at runtime) resolve libssl/libcrypto from /opt/openssl/lib.
+ENV PATH="/opt/openssl/bin:/opt/clamav/bin:/opt/clamav/sbin:${PATH}"
+ENV LD_LIBRARY_PATH="/opt/openssl/lib:/opt/clamav/lib"
+ENV OPENSSL_CONF="/opt/openssl/ssl/openssl.cnf"
 
 # ── Create dedicated system user and required directories ─────────────────────
 RUN groupadd -r clamav \
