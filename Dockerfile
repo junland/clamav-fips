@@ -2,24 +2,29 @@
 # Stage 1 – Builder
 # Compiles ClamAV from source against OpenSSL 3 FIPS provider.
 # ==============================================================================
-FROM ubuntu:22.04 AS builder
+FROM debian:testing AS builder
 
 ARG CLAMAV_VERSION=1.5.3
-ARG CLAMAV_SHA256=36af674e0fa4c7a065a23de3c7e748d0c5a14df8928f9a22c68df9d6c6b36e33
+ARG CLAMAV_SHA256=89af57a45bbf13de4dc91ed7f20b435388c88428eb7dc30639a02b2f0fc2dad1
 
 ENV DEBIAN_FRONTEND=noninteractive
 
 # ── Build-time dependencies ──────────────────────────────────────────────────
 RUN apt-get update && apt-get install -y --no-install-recommends \
         build-essential \
+        cargo \
         cmake \
         ninja-build \
         pkg-config \
         python3 \
+        rustc \
         wget \
         dpkg-dev \
         # ClamAV mandatory deps
+        openssl \
         libssl-dev \
+        libbz2-dev \
+        libncurses-dev \
         zlib1g-dev \
         libpcre2-dev \
         libxml2-dev \
@@ -30,11 +35,14 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         openssl-provider-fips \
     && rm -rf /var/lib/apt/lists/*
 
-# ── Generate the OpenSSL FIPS provider integrity file ────────────────────────
-RUN ARCH_TRIPLE=$(dpkg-architecture -qDEB_HOST_MULTIARCH) && \
-    openssl fipsinstall \
-        -out /etc/ssl/fips.cnf \
-        -module "/usr/lib/${ARCH_TRIPLE}/ossl-modules/fips.so"
+# ── Enable the distro-provided OpenSSL FIPS provider ─────────────────────────
+RUN openssl fipsinstall \
+        -module /usr/lib/*/ossl-modules/fips.so \
+        -out /etc/ssl/fipsmodule.cnf \
+    && sed -i \
+        -e 's|^# \.include fipsmodule.cnf|.include /etc/ssl/fipsmodule.cnf|' \
+        -e 's|^# fips = fips_sect|fips = fips_sect|' \
+        /etc/ssl/openssl.cnf
 
 # ── Download and verify ClamAV source ────────────────────────────────────────
 WORKDIR /src
@@ -61,49 +69,34 @@ RUN cmake -G Ninja -B build \
 # Stage 2 – Runtime
 # Minimal image with the FIPS provider active and ClamAV installed.
 # ==============================================================================
-FROM ubuntu:22.04
+FROM debian:testing
 
 ENV DEBIAN_FRONTEND=noninteractive
 
 # ── Runtime dependencies ─────────────────────────────────────────────────────
 RUN apt-get update && apt-get install -y --no-install-recommends \
         openssl \
-        libssl3 \
         openssl-provider-fips \
+        libbz2-1.0 \
+        libncursesw6 \
         zlib1g \
         libpcre2-8-0 \
-        libxml2 \
+        libxml2-16 \
         libjson-c5 \
-        libcurl4 \
+        libcurl4t64 \
         libmilter1.0.1 \
     && rm -rf /var/lib/apt/lists/*
 
-# ── Enable OpenSSL FIPS provider ─────────────────────────────────────────────
-COPY --from=builder /etc/ssl/fips.cnf /etc/ssl/fips.cnf
-
-RUN sed -i 's/^\(# *\)\?openssl_conf = .*/openssl_conf = openssl_init/' /etc/ssl/openssl.cnf \
-    && cat >> /etc/ssl/openssl.cnf <<'EOF'
-
-# ── FIPS provider activation ──────────────────────────────────────────────────
-[openssl_init]
-providers = provider_sect
-
-[provider_sect]
-fips = fips_sect
-base = base_sect
-
-[fips_sect]
-activate = 1
-module-mac = /etc/ssl/fips.cnf
-
-[base_sect]
-activate = 1
-EOF
-
-# ── Install ClamAV ────────────────────────────────────────────────────────────
+# ── Enable OpenSSL FIPS provider and install ClamAV ──────────────────────────
+RUN openssl fipsinstall \
+        -module /usr/lib/*/ossl-modules/fips.so \
+        -out /etc/ssl/fipsmodule.cnf \
+    && sed -i \
+        -e 's|^# \.include fipsmodule.cnf|.include /etc/ssl/fipsmodule.cnf|' \
+        -e 's|^# fips = fips_sect|fips = fips_sect|' \
+        /etc/ssl/openssl.cnf
 COPY --from=builder /opt/clamav /opt/clamav
 ENV PATH="/opt/clamav/bin:/opt/clamav/sbin:${PATH}"
-ENV LD_LIBRARY_PATH="/opt/clamav/lib:${LD_LIBRARY_PATH}"
 
 # ── Create dedicated system user (deterministic UID/GID) ──────────────────────
 RUN groupadd -g 101 -r clamav \
@@ -117,6 +110,9 @@ RUN groupadd -g 101 -r clamav \
         /var/log/clamav \
         /var/run/clamav \
         /opt/clamav/etc
+
+RUN echo /opt/clamav/lib > /etc/ld.so.conf.d/clamav.conf \
+    && ldconfig
 
 # ── Default ClamAV configuration ─────────────────────────────────────────────
 RUN cp /opt/clamav/etc/freshclam.conf.sample /opt/clamav/etc/freshclam.conf \

@@ -7,8 +7,8 @@ OpenSSL 3's FIPS provider active.
 
 | Stage | What happens |
 |-------|-------------|
-| **Builder** | Ubuntu 22.04 image installs all build-time dependencies, runs `openssl fipsinstall` to generate the FIPS integrity file, downloads and verifies the ClamAV 1.5.3 source tarball (SHA-256 checked), then compiles ClamAV with CMake/Ninja against the system OpenSSL 3 FIPS-capable library. |
-| **Runtime** | A fresh Ubuntu 22.04 image installs only runtime libraries, copies the FIPS integrity file and the compiled ClamAV installation from the builder stage, then patches `openssl.cnf` to activate the FIPS provider so every TLS/hash operation performed by ClamAV is FIPS-compliant. |
+| **Builder** | Debian testing installs the build dependencies together with the distro-packaged `openssl-provider-fips`, runs `openssl fipsinstall` to generate the module integrity file, downloads and verifies the ClamAV 1.5.3 source tarball (SHA-256 checked), then compiles ClamAV with CMake/Ninja against the system OpenSSL library. |
+| **Runtime** | A fresh Debian testing image installs only runtime libraries plus `openssl-provider-fips`, copies the generated FIPS configuration and the compiled ClamAV installation from the builder stage, then loads the FIPS provider through the system `openssl.cnf` so every TLS/hash operation performed by ClamAV is FIPS-compliant. |
 
 The container **entrypoint is `clamscan`**. Arguments passed to `docker run`
 are forwarded directly to `clamscan`.
