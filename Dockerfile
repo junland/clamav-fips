@@ -1,40 +1,33 @@
 # ==============================================================================
 # Stage 1 – Builder
-# Compiles ClamAV from source against OpenSSL 3 FIPS provider.
+# Compiles ClamAV 1.5.3 from source against OpenSSL 3 FIPS provider on Alpine.
 # ==============================================================================
-FROM ubuntu:22.04 AS builder
+FROM alpine:3.24 AS builder
 
 ARG CLAMAV_VERSION=1.5.3
 ARG CLAMAV_SHA256=36af674e0fa4c7a065a23de3c7e748d0c5a14df8928f9a22c68df9d6c6b36e33
 
-ENV DEBIAN_FRONTEND=noninteractive
-
 # ── Build-time dependencies ──────────────────────────────────────────────────
-RUN apt-get update && apt-get install -y --no-install-recommends \
-        build-essential \
+RUN apk add --no-cache \
+        build-base \
         cmake \
-        ninja-build \
-        pkg-config \
+        ninja \
+        pkgconf \
         python3 \
         wget \
-        dpkg-dev \
-        # ClamAV mandatory deps
-        libssl-dev \
-        zlib1g-dev \
-        libpcre2-dev \
+        openssl-dev \
+        openssl-fips \
+        zlib-dev \
+        pcre2-dev \
         libxml2-dev \
-        libjson-c-dev \
-        libcurl4-openssl-dev \
-        # Optional: milter support
-        libmilter-dev \
-        openssl-provider-fips \
-    && rm -rf /var/lib/apt/lists/*
+        json-c-dev \
+        curl-dev \
+        libmilter-dev
 
 # ── Generate the OpenSSL FIPS provider integrity file ────────────────────────
-RUN ARCH_TRIPLE=$(dpkg-architecture -qDEB_HOST_MULTIARCH) && \
-    openssl fipsinstall \
+RUN openssl fipsinstall \
         -out /etc/ssl/fips.cnf \
-        -module "/usr/lib/${ARCH_TRIPLE}/ossl-modules/fips.so"
+        -module /usr/lib/ossl-modules/fips.so
 
 # ── Download and verify ClamAV source ────────────────────────────────────────
 WORKDIR /src
@@ -59,24 +52,20 @@ RUN cmake -G Ninja -B build \
 
 # ==============================================================================
 # Stage 2 – Runtime
-# Minimal image with the FIPS provider active and ClamAV installed.
+# Minimal Alpine runtime image with OpenSSL 3 FIPS active.
 # ==============================================================================
-FROM ubuntu:22.04
-
-ENV DEBIAN_FRONTEND=noninteractive
+FROM alpine:3.24
 
 # ── Runtime dependencies ─────────────────────────────────────────────────────
-RUN apt-get update && apt-get install -y --no-install-recommends \
+RUN apk add --no-cache \
         openssl \
-        libssl3 \
-        openssl-provider-fips \
-        zlib1g \
-        libpcre2-8-0 \
+        openssl-fips-provider \
+        zlib \
+        pcre2 \
         libxml2 \
-        libjson-c5 \
-        libcurl4 \
-        libmilter1.0.1 \
-    && rm -rf /var/lib/apt/lists/*
+        json-c \
+        curl \
+        libmilter
 
 # ── Enable OpenSSL FIPS provider ─────────────────────────────────────────────
 COPY --from=builder /etc/ssl/fips.cnf /etc/ssl/fips.cnf
@@ -106,8 +95,8 @@ ENV PATH="/opt/clamav/bin:/opt/clamav/sbin:${PATH}"
 ENV LD_LIBRARY_PATH="/opt/clamav/lib:${LD_LIBRARY_PATH}"
 
 # ── Create dedicated system user (deterministic UID/GID) ──────────────────────
-RUN groupadd -g 101 -r clamav \
-    && useradd -u 101 -r -g clamav -s /usr/sbin/nologin -d /var/lib/clamav clamav \
+RUN addgroup -g 101 -S clamav \
+    && adduser -u 101 -S -G clamav -s /sbin/nologin -h /var/lib/clamav clamav \
     && mkdir -p \
         /var/lib/clamav \
         /var/log/clamav \
@@ -136,7 +125,7 @@ RUN cp /opt/clamav/etc/clamd.conf.sample /opt/clamav/etc/clamd.conf \
         /opt/clamav/etc/clamd.conf
 
 # ── Verification & Healthcheck ────────────────────────────────────────────────
-# Confirm OpenSSL FIPS provider loads correctly at build time
+# Confirm OpenSSL FIPS provider loads correctly during build
 RUN openssl list -providers | grep -i fips
 
 HEALTHCHECK --interval=60s --timeout=30s --start-period=120s --retries=3 \
