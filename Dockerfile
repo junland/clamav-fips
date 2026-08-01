@@ -17,7 +17,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         pkg-config \
         python3 \
         wget \
-        # ClamAV mandatory deps
+        # OpenSSL CLI (needed for openssl fipsinstall) + dev headers
+        openssl \
         libssl-dev \
         zlib1g-dev \
         libpcre2-dev \
