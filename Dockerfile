@@ -1,6 +1,6 @@
 # ==============================================================================
 # Stage 1 – Builder
-# Compiles ClamAV 1.5.3 from source against an OpenSSL 3 FIPS provider.
+# Compiles ClamAV from source against OpenSSL 3 FIPS provider.
 # ==============================================================================
 FROM ubuntu:22.04 AS builder
 
@@ -17,6 +17,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         pkg-config \
         python3 \
         wget \
+        dpkg-dev \
         # ClamAV mandatory deps
         libssl-dev \
         zlib1g-dev \
@@ -26,13 +27,14 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         libcurl4-openssl-dev \
         # Optional: milter support
         libmilter-dev \
+        openssl-provider-fips \
     && rm -rf /var/lib/apt/lists/*
 
 # ── Generate the OpenSSL FIPS provider integrity file ────────────────────────
-# openssl fipsinstall writes fips.cnf which binds the FIPS module to its HMAC.
-RUN openssl fipsinstall \
+RUN ARCH_TRIPLE=$(dpkg-architecture -qDEB_HOST_MULTIARCH) && \
+    openssl fipsinstall \
         -out /etc/ssl/fips.cnf \
-        -module /usr/lib/x86_64-linux-gnu/ossl-modules/fips.so
+        -module "/usr/lib/${ARCH_TRIPLE}/ossl-modules/fips.so"
 
 # ── Download and verify ClamAV source ────────────────────────────────────────
 WORKDIR /src
@@ -47,18 +49,17 @@ WORKDIR /src/clamav-${CLAMAV_VERSION}
 RUN cmake -G Ninja -B build \
         -DCMAKE_BUILD_TYPE=Release \
         -DCMAKE_INSTALL_PREFIX=/opt/clamav \
-        # Disable features that are not needed in a minimal FIPS container
         -DENABLE_EXAMPLES=OFF \
         -DENABLE_TESTS=OFF \
         -DENABLE_DOCS=OFF \
-        # Point cmake at the system OpenSSL 3 (FIPS-capable)
         -DOPENSSL_ROOT_DIR=/usr \
     && cmake --build build --parallel "$(nproc)" \
     && cmake --install build
 
+
 # ==============================================================================
 # Stage 2 – Runtime
-# Minimal image with the FIPS provider active and the ClamAV install dropped in.
+# Minimal image with the FIPS provider active and ClamAV installed.
 # ==============================================================================
 FROM ubuntu:22.04
 
@@ -66,10 +67,9 @@ ENV DEBIAN_FRONTEND=noninteractive
 
 # ── Runtime dependencies ─────────────────────────────────────────────────────
 RUN apt-get update && apt-get install -y --no-install-recommends \
-        # OpenSSL 3 runtime + FIPS provider module
         openssl \
         libssl3 \
-        # ClamAV runtime deps
+        openssl-provider-fips \
         zlib1g \
         libpcre2-8-0 \
         libxml2 \
@@ -79,13 +79,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 # ── Enable OpenSSL FIPS provider ─────────────────────────────────────────────
-# Copy the HMAC integrity file produced by "openssl fipsinstall" in the builder.
 COPY --from=builder /etc/ssl/fips.cnf /etc/ssl/fips.cnf
 
-# Patch the global openssl.cnf to activate the FIPS provider and make it the
-# default, while keeping the base provider available for internal TLS plumbing.
-RUN sed -i 's/^\(# *\)\?openssl_conf = .*/openssl_conf = openssl_init/' \
-        /etc/ssl/openssl.cnf \
+RUN sed -i 's/^\(# *\)\?openssl_conf = .*/openssl_conf = openssl_init/' /etc/ssl/openssl.cnf \
     && cat >> /etc/ssl/openssl.cnf <<'EOF'
 
 # ── FIPS provider activation ──────────────────────────────────────────────────
@@ -98,7 +94,6 @@ base = base_sect
 
 [fips_sect]
 activate = 1
-# Load integrity data from the fipsinstall step
 module-mac = /etc/ssl/fips.cnf
 
 [base_sect]
@@ -110,9 +105,9 @@ COPY --from=builder /opt/clamav /opt/clamav
 ENV PATH="/opt/clamav/bin:/opt/clamav/sbin:${PATH}"
 ENV LD_LIBRARY_PATH="/opt/clamav/lib:${LD_LIBRARY_PATH}"
 
-# ── Create dedicated system user and required directories ─────────────────────
-RUN groupadd -r clamav \
-    && useradd -r -g clamav -s /usr/sbin/nologin -d /var/lib/clamav clamav \
+# ── Create dedicated system user (deterministic UID/GID) ──────────────────────
+RUN groupadd -g 101 -r clamav \
+    && useradd -u 101 -r -g clamav -s /usr/sbin/nologin -d /var/lib/clamav clamav \
     && mkdir -p \
         /var/lib/clamav \
         /var/log/clamav \
@@ -123,8 +118,7 @@ RUN groupadd -r clamav \
         /var/run/clamav \
         /opt/clamav/etc
 
-# ── Default ClamAV configuration (minimal, FIPS-friendly) ────────────────────
-# freshclam.conf
+# ── Default ClamAV configuration ─────────────────────────────────────────────
 RUN cp /opt/clamav/etc/freshclam.conf.sample /opt/clamav/etc/freshclam.conf \
     && sed -i \
         -e 's/^Example/#Example/' \
@@ -132,7 +126,6 @@ RUN cp /opt/clamav/etc/freshclam.conf.sample /opt/clamav/etc/freshclam.conf \
         -e 's|^#\?UpdateLogFile.*|UpdateLogFile /var/log/clamav/freshclam.log|' \
         /opt/clamav/etc/freshclam.conf
 
-# clamd.conf
 RUN cp /opt/clamav/etc/clamd.conf.sample /opt/clamav/etc/clamd.conf \
     && sed -i \
         -e 's/^Example/#Example/' \
@@ -142,14 +135,15 @@ RUN cp /opt/clamav/etc/clamd.conf.sample /opt/clamav/etc/clamd.conf \
         -e 's|^#\?PidFile.*|PidFile /var/run/clamav/clamd.pid|' \
         /opt/clamav/etc/clamd.conf
 
-# ── Healthcheck ───────────────────────────────────────────────────────────────
+# ── Verification & Healthcheck ────────────────────────────────────────────────
+# Confirm OpenSSL FIPS provider loads correctly at build time
+RUN openssl list -providers | grep -i fips
+
 HEALTHCHECK --interval=60s --timeout=30s --start-period=120s --retries=3 \
-    CMD clamscan --version || exit 1
+    CMD clamscan --version && openssl list -providers | grep -i "fips" || exit 1
 
 USER clamav
 WORKDIR /var/lib/clamav
 
-# clamscan is the entrypoint; pass extra flags or paths via `docker run`.
-# Example: docker run --rm clamav-fips /scan-target --database=/var/lib/clamav
 ENTRYPOINT ["clamscan"]
 CMD ["--help"]
