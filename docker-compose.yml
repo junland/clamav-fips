@@ -1,0 +1,25 @@
+services:
+  clamav-fips:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        CLAMAV_VERSION: "1.5.3"
+    image: clamav-fips:1.5.3
+    # clamscan is the ENTRYPOINT; override CMD to scan a path or pass flags.
+    # Default (no arguments) prints clamscan --help.
+    # Example: scan files mounted at /scan
+    command: ["--database=/var/lib/clamav", "/scan"]
+    volumes:
+      # Persist virus-definition database across container restarts
+      - clamav-db:/var/lib/clamav
+      # Mount the directory you want to scan (read-only)
+      - type: bind
+        source: ./scan-target
+        target: /scan
+        read_only: true
+    environment:
+      - DEBIAN_FRONTEND=noninteractive
+
+volumes:
+  clamav-db:
