@@ -9,17 +9,21 @@ ARG CLAMAV_SHA256=89af57a45bbf13de4dc91ed7f20b435388c88428eb7dc30639a02b2f0fc2da
 
 # ── Build-time dependencies ──────────────────────────────────────────────────
 RUN apk add --no-cache \
+        bsd-compat-headers \
         build-base \
         bzip2-dev \
         cargo \
         check-dev \
         cmake \
         curl-dev \
+        file \
+        g++ \
         json-c-dev \
         libmilter-dev \
         libmspack-dev \
         libxml2-dev \
         linux-headers \
+        make \
         musl-fts-dev \
         ncurses-dev \
         ninja \
@@ -52,22 +56,20 @@ RUN tar -xzf "clamav-${CLAMAV_VERSION}.tar.gz" && rm "clamav-${CLAMAV_VERSION}.t
 # ── Build ClamAV ─────────────────────────────────────────────────────────────
 WORKDIR /src/clamav-${CLAMAV_VERSION}
 RUN cmake -B build -G Ninja \
-		-DCMAKE_BUILD_TYPE=None \
+		-DCMAKE_BUILD_TYPE="Release" \
 		-DCMAKE_INSTALL_PREFIX=/usr \
 		-DCMAKE_INSTALL_LIBDIR=/usr/lib \
-		-DCMAKE_SKIP_INSTALL_RPATH=ON \
 		-DAPP_CONFIG_DIRECTORY=/etc/clamav \
 		-DDATABASE_DIRECTORY=/var/lib/clamav \
+		-DENABLE_CLAMONACC=ON \
 		-DENABLE_DOXYGEN=OFF \
+		-DENABLE_EXAMPLES=OFF \
+		-DENABLE_JSON_SHARED=ON \
+		-DENABLE_MILTER=ON \
 		-DENABLE_SYSTEMD=OFF \
 		-DENABLE_TESTS=ON \
-		-DENABLE_CLAMONACC=ON \
-		-DENABLE_MILTER=ON \
-		-DENABLE_EXTERNAL_MSPACK=ON \
-		-DENABLE_EXAMPLES=ON \
-		-DENABLE_EXAMPLES_DEFAULT=ON \
 		-DHAVE_SYSTEM_LFS_FTS=ON \
-		-DENABLE_JSON_SHARED=ON
+        -DENABLE_MAN_PAGES=OFF
 
 RUN cmake --build build
 
@@ -81,14 +83,19 @@ FROM alpine:3.24
 
 # ── Runtime dependencies ─────────────────────────────────────────────────────
 RUN apk add --no-cache \
-        openssl \
-        openssl-fips \
-        zlib \
-        pcre2 \
-        libxml2 \
+        fts \
         json-c \
-        curl \
-        libmilter
+        libbz2 \
+        libcurl \
+        libmilter \
+        libstdc++ \
+        libxml2 \
+        ncurses-libs \
+        openssl-dev \
+        openssl-fips \
+        pcre2 \
+        tzdata \
+        zlib
 
 # ── Enable OpenSSL FIPS provider ─────────────────────────────────────────────
 COPY --from=builder /etc/ssl/fipsmodule.cnf /etc/ssl/fips.cnf
