@@ -26,10 +26,7 @@ RUN apk add --no-cache \
         curl-dev \
         libmilter-dev
 
-# ── Generate the OpenSSL FIPS provider integrity file ────────────────────────
-RUN openssl fipsinstall \
-        -out /etc/ssl/fips.cnf \
-        -module /usr/lib/ossl-modules/fips.so
+RUN mkdir -p /src
 
 # ── Download and verify ClamAV source ────────────────────────────────────────
 WORKDIR /src
@@ -70,7 +67,7 @@ RUN apk add --no-cache \
         libmilter
 
 # ── Enable OpenSSL FIPS provider ─────────────────────────────────────────────
-COPY --from=builder /etc/ssl/fips.cnf /etc/ssl/fips.cnf
+COPY --from=builder /etc/ssl/fipsmodule.cnf /etc/ssl/fips.cnf
 
 RUN sed -i 's/^\(# *\)\?openssl_conf = .*/openssl_conf = openssl_init/' /etc/ssl/openssl.cnf \
     && cat >> /etc/ssl/openssl.cnf <<'EOF'
