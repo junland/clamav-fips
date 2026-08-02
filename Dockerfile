@@ -59,7 +59,7 @@ FROM alpine:3.24
 # ── Runtime dependencies ─────────────────────────────────────────────────────
 RUN apk add --no-cache \
         openssl \
-        openssl-fips-provider \
+        openssl-fips \
         zlib \
         pcre2 \
         libxml2 \
