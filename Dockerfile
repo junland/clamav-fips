@@ -8,6 +8,8 @@ ARG CLAMAV_VERSION=1.5.3
 ARG CLAMAV_SHA256=89af57a45bbf13de4dc91ed7f20b435388c88428eb7dc30639a02b2f0fc2dad1
 
 # ── Build-time dependencies ──────────────────────────────────────────────────
+RUN apk update && apk upgrade --no-cache
+
 RUN apk add --no-cache \
         bsd-compat-headers \
         build-base \
@@ -40,7 +42,6 @@ RUN apk add --no-cache \
         samurai \
         wget \
         zlib-dev
-
 
 RUN mkdir -p /src
 
@@ -82,6 +83,8 @@ RUN cmake --install build --prefix /opt/clamav
 FROM alpine:3.24
 
 # ── Runtime dependencies ─────────────────────────────────────────────────────
+RUN apk update && apk upgrade --no-cache
+
 RUN apk add --no-cache \
         fts \
         json-c \
