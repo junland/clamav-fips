@@ -13,9 +13,14 @@ RUN apk add --no-cache \
         cmake \
         ninja \
         pkgconf \
+        bzip2-dev \
         python3 \
         wget \
         rust \
+        rustup \
+        rustfmt \
+        rust-lldb \
+        rust-bindgen \
         cargo \
         openssl-dev \
         openssl-fips \
