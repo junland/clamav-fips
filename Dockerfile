@@ -15,7 +15,9 @@ RUN apk add --no-cache \
         pkgconf \
         python3 \
         wget \
-        openssl-dev \
+        rust \
+        cargo \
+        openssl-devel \
         openssl-fips \
         zlib-dev \
         pcre2-dev \
