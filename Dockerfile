@@ -5,7 +5,7 @@
 FROM alpine:3.24 AS builder
 
 ARG CLAMAV_VERSION=1.5.3
-ARG CLAMAV_SHA256=36af674e0fa4c7a065a23de3c7e748d0c5a14df8928f9a22c68df9d6c6b36e33
+ARG CLAMAV_SHA256=89af57a45bbf13de4dc91ed7f20b435388c88428eb7dc30639a02b2f0fc2dad1
 
 # ── Build-time dependencies ──────────────────────────────────────────────────
 RUN apk add --no-cache \
@@ -31,7 +31,7 @@ RUN mkdir -p /src
 # ── Download and verify ClamAV source ────────────────────────────────────────
 WORKDIR /src
 
-RUN wget -q "https://github.com/Cisco-Talos/clamav/archive/refs/tags/clamav-${CLAMAV_VERSION}.tar.gz -O "clamav-${CLAMAV_VERSION}.tar.gz" 
+RUN wget -q "https://github.com/Cisco-Talos/clamav/releases/download/clamav-${CLAMAV_VERSION}/clamav-${CLAMAV_VERSION}.tar.gz" -O "clamav-${CLAMAV_VERSION}.tar.gz" 
         
 RUN echo "${CLAMAV_SHA256}  clamav-${CLAMAV_VERSION}.tar.gz" | sha256sum -c -
 
