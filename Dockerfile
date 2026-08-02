@@ -51,16 +51,25 @@ RUN tar -xzf "clamav-${CLAMAV_VERSION}.tar.gz" && rm "clamav-${CLAMAV_VERSION}.t
 
 # ── Build ClamAV ─────────────────────────────────────────────────────────────
 WORKDIR /src/clamav-${CLAMAV_VERSION}
-RUN cmake -G Ninja -B build \
-        -DCMAKE_BUILD_TYPE=Release \
-        -DCMAKE_INSTALL_PREFIX=/opt/clamav \
-        -DENABLE_EXAMPLES=OFF \
-        -DENABLE_TESTS=OFF \
-        -DENABLE_DOCS=OFF \
-        -DOPENSSL_ROOT_DIR=/usr \
-    && cmake --build build --parallel "$(nproc)" \
-    && cmake --install build
+RUN cmake -B build -G Ninja \
+		-DCMAKE_BUILD_TYPE=None \
+		-DCMAKE_INSTALL_PREFIX=/usr \
+		-DCMAKE_INSTALL_LIBDIR=/usr/lib \
+		-DCMAKE_SKIP_INSTALL_RPATH=ON \
+		-DAPP_CONFIG_DIRECTORY=/etc/clamav \
+		-DDATABASE_DIRECTORY=/var/lib/clamav \
+		-DENABLE_DOXYGEN=OFF \
+		-DENABLE_SYSTEMD=OFF \
+		-DENABLE_TESTS=ON \
+		-DENABLE_CLAMONACC=ON \
+		-DENABLE_MILTER=ON \
+		-DENABLE_EXTERNAL_MSPACK=ON \
+		-DENABLE_EXAMPLES=ON \
+		-DENABLE_EXAMPLES_DEFAULT=ON \
+		-DHAVE_SYSTEM_LFS_FTS=ON \
+		-DENABLE_JSON_SHARED=ON
 
+RUN cmake --build build --target install
 
 # ==============================================================================
 # Stage 2 – Runtime
