@@ -5,50 +5,73 @@
 FROM alpine:3.24 AS builder
 
 ARG CLAMAV_VERSION=1.5.3
-ARG CLAMAV_SHA256=36af674e0fa4c7a065a23de3c7e748d0c5a14df8928f9a22c68df9d6c6b36e33
+ARG CLAMAV_SHA256=89af57a45bbf13de4dc91ed7f20b435388c88428eb7dc30639a02b2f0fc2dad1
 
 # ── Build-time dependencies ──────────────────────────────────────────────────
 RUN apk add --no-cache \
         build-base \
+        bzip2-dev \
+        cargo \
+        check-dev \
         cmake \
+        curl-dev \
+        json-c-dev \
+        libmilter-dev \
+        libmspack-dev \
+        libxml2-dev \
+        linux-headers \
+        musl-fts-dev \
+        ncurses-dev \
         ninja \
-        pkgconf \
-        python3 \
-        wget \
         openssl-dev \
         openssl-fips \
-        zlib-dev \
         pcre2-dev \
-        libxml2-dev \
-        json-c-dev \
-        curl-dev \
-        libmilter-dev
+        pkgconf \
+        python3 \
+        rust \
+        rust-bindgen \
+        rust-lldb \
+        rustfmt \
+        rustup \
+        samurai \
+        wget \
+        zlib-dev
 
-# ── Generate the OpenSSL FIPS provider integrity file ────────────────────────
-RUN openssl fipsinstall \
-        -out /etc/ssl/fips.cnf \
-        -module /usr/lib/ossl-modules/fips.so
+
+RUN mkdir -p /src
 
 # ── Download and verify ClamAV source ────────────────────────────────────────
 WORKDIR /src
-RUN wget -q "https://github.com/Cisco-Talos/clamav/releases/download/clamav-${CLAMAV_VERSION}/clamav-${CLAMAV_VERSION}.tar.gz" \
-        -O "clamav-${CLAMAV_VERSION}.tar.gz" \
-    && echo "${CLAMAV_SHA256}  clamav-${CLAMAV_VERSION}.tar.gz" | sha256sum -c - \
-    && tar -xzf "clamav-${CLAMAV_VERSION}.tar.gz" \
-    && rm "clamav-${CLAMAV_VERSION}.tar.gz"
+
+RUN wget -q "https://github.com/Cisco-Talos/clamav/releases/download/clamav-${CLAMAV_VERSION}/clamav-${CLAMAV_VERSION}.tar.gz" -O "clamav-${CLAMAV_VERSION}.tar.gz" 
+        
+RUN echo "${CLAMAV_SHA256}  clamav-${CLAMAV_VERSION}.tar.gz" | sha256sum -c -
+
+RUN tar -xzf "clamav-${CLAMAV_VERSION}.tar.gz" && rm "clamav-${CLAMAV_VERSION}.tar.gz"
 
 # ── Build ClamAV ─────────────────────────────────────────────────────────────
 WORKDIR /src/clamav-${CLAMAV_VERSION}
-RUN cmake -G Ninja -B build \
-        -DCMAKE_BUILD_TYPE=Release \
-        -DCMAKE_INSTALL_PREFIX=/opt/clamav \
-        -DENABLE_EXAMPLES=OFF \
-        -DENABLE_TESTS=OFF \
-        -DENABLE_DOCS=OFF \
-        -DOPENSSL_ROOT_DIR=/usr \
-    && cmake --build build --parallel "$(nproc)" \
-    && cmake --install build
+RUN cmake -B build -G Ninja \
+		-DCMAKE_BUILD_TYPE=None \
+		-DCMAKE_INSTALL_PREFIX=/usr \
+		-DCMAKE_INSTALL_LIBDIR=/usr/lib \
+		-DCMAKE_SKIP_INSTALL_RPATH=ON \
+		-DAPP_CONFIG_DIRECTORY=/etc/clamav \
+		-DDATABASE_DIRECTORY=/var/lib/clamav \
+		-DENABLE_DOXYGEN=OFF \
+		-DENABLE_SYSTEMD=OFF \
+		-DENABLE_TESTS=ON \
+		-DENABLE_CLAMONACC=ON \
+		-DENABLE_MILTER=ON \
+		-DENABLE_EXTERNAL_MSPACK=ON \
+		-DENABLE_EXAMPLES=ON \
+		-DENABLE_EXAMPLES_DEFAULT=ON \
+		-DHAVE_SYSTEM_LFS_FTS=ON \
+		-DENABLE_JSON_SHARED=ON
 
+RUN cmake --build build
+
+RUN cmake --install build --prefix /opt/clamav
 
 # ==============================================================================
 # Stage 2 – Runtime
@@ -59,7 +82,7 @@ FROM alpine:3.24
 # ── Runtime dependencies ─────────────────────────────────────────────────────
 RUN apk add --no-cache \
         openssl \
-        openssl-fips-provider \
+        openssl-fips \
         zlib \
         pcre2 \
         libxml2 \
@@ -68,7 +91,7 @@ RUN apk add --no-cache \
         libmilter
 
 # ── Enable OpenSSL FIPS provider ─────────────────────────────────────────────
-COPY --from=builder /etc/ssl/fips.cnf /etc/ssl/fips.cnf
+COPY --from=builder /etc/ssl/fipsmodule.cnf /etc/ssl/fips.cnf
 
 RUN sed -i 's/^\(# *\)\?openssl_conf = .*/openssl_conf = openssl_init/' /etc/ssl/openssl.cnf \
     && cat >> /etc/ssl/openssl.cnf <<'EOF'
@@ -106,6 +129,17 @@ RUN addgroup -g 101 -S clamav \
         /var/log/clamav \
         /var/run/clamav \
         /opt/clamav/etc
+
+# Create symlinks for ClamAV binaries in /usr/bin and /usr/sbin
+RUN ln -s /opt/clamav/bin/* /usr/bin/ \
+    && ln -s /opt/clamav/sbin/* /usr/sbin/
+
+# Create symlinks for ClamAV libraries in /usr/lib
+RUN ln -s /opt/clamav/lib/* /usr/lib/
+
+# Create symlinks for ClamAV configuration files in /etc/clamav
+RUN mkdir -p /etc/clamav \
+    && ln -s /opt/clamav/etc/* /etc/clamav/
 
 # ── Default ClamAV configuration ─────────────────────────────────────────────
 RUN cp /opt/clamav/etc/freshclam.conf.sample /opt/clamav/etc/freshclam.conf \
