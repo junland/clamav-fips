@@ -10,26 +10,33 @@ ARG CLAMAV_SHA256=89af57a45bbf13de4dc91ed7f20b435388c88428eb7dc30639a02b2f0fc2da
 # ── Build-time dependencies ──────────────────────────────────────────────────
 RUN apk add --no-cache \
         build-base \
-        cmake \
-        ninja \
-        pkgconf \
         bzip2-dev \
-        python3 \
-        wget \
-        rust \
-        rustup \
-        rustfmt \
-        rust-lldb \
-        rust-bindgen \
         cargo \
+        check-dev \
+        cmake \
+        curl-dev \
+        json-c-dev \
+        libmilter-dev \
+        libmspack-dev \
+        libxml2-dev \
+        linux-headers \
+        musl-fts-dev \
+        ncurses-dev \
+        ninja \
         openssl-dev \
         openssl-fips \
-        zlib-dev \
         pcre2-dev \
-        libxml2-dev \
-        json-c-dev \
-        curl-dev \
-        libmilter-dev
+        pkgconf \
+        python3 \
+        rust \
+        rust-bindgen \
+        rust-lldb \
+        rustfmt \
+        rustup \
+        samurai \
+        wget \
+        zlib-dev
+
 
 RUN mkdir -p /src
 
