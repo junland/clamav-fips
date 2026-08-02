@@ -69,7 +69,9 @@ RUN cmake -B build -G Ninja \
 		-DHAVE_SYSTEM_LFS_FTS=ON \
 		-DENABLE_JSON_SHARED=ON
 
-RUN cmake --build build --target install
+RUN cmake --build build
+
+RUN cmake --install build --prefix /opt/clamav
 
 # ==============================================================================
 # Stage 2 – Runtime
@@ -127,6 +129,17 @@ RUN addgroup -g 101 -S clamav \
         /var/log/clamav \
         /var/run/clamav \
         /opt/clamav/etc
+
+# Create symlinks for ClamAV binaries in /usr/bin and /usr/sbin
+RUN ln -s /opt/clamav/bin/* /usr/bin/ \
+    && ln -s /opt/clamav/sbin/* /usr/sbin/
+
+# Create symlinks for ClamAV libraries in /usr/lib
+RUN ln -s /opt/clamav/lib/* /usr/lib/
+
+# Create symlinks for ClamAV configuration files in /etc/clamav
+RUN mkdir -p /etc/clamav \
+    && ln -s /opt/clamav/etc/* /etc/clamav/
 
 # ── Default ClamAV configuration ─────────────────────────────────────────────
 RUN cp /opt/clamav/etc/freshclam.conf.sample /opt/clamav/etc/freshclam.conf \
