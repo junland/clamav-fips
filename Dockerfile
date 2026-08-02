@@ -30,11 +30,12 @@ RUN mkdir -p /src
 
 # ── Download and verify ClamAV source ────────────────────────────────────────
 WORKDIR /src
-RUN wget -q "https://github.com/Cisco-Talos/clamav/releases/download/clamav-${CLAMAV_VERSION}/clamav-${CLAMAV_VERSION}.tar.gz" \
-        -O "clamav-${CLAMAV_VERSION}.tar.gz" \
-    && echo "${CLAMAV_SHA256}  clamav-${CLAMAV_VERSION}.tar.gz" | sha256sum -c - \
-    && tar -xzf "clamav-${CLAMAV_VERSION}.tar.gz" \
-    && rm "clamav-${CLAMAV_VERSION}.tar.gz"
+
+RUN wget -q "https://github.com/Cisco-Talos/clamav/archive/refs/tags/clamav-${CLAMAV_VERSION}.tar.gz -O "clamav-${CLAMAV_VERSION}.tar.gz" 
+        
+RUN echo "${CLAMAV_SHA256}  clamav-${CLAMAV_VERSION}.tar.gz" | sha256sum -c -
+
+RUN tar -xzf "clamav-${CLAMAV_VERSION}.tar.gz" && rm "clamav-${CLAMAV_VERSION}.tar.gz"
 
 # ── Build ClamAV ─────────────────────────────────────────────────────────────
 WORKDIR /src/clamav-${CLAMAV_VERSION}
