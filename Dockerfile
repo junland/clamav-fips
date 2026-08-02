@@ -17,7 +17,7 @@ RUN apk add --no-cache \
         wget \
         rust \
         cargo \
-        openssl-devel \
+        openssl-dev \
         openssl-fips \
         zlib-dev \
         pcre2-dev \
